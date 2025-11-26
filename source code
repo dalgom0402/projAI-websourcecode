@@ -1,260 +1,97 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Diabetes Risk Predictor</title>
-    <!-- Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Use Inter font -->
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f7fafc;
-        }
-    </style>
-</head>
-<body class="min-h-screen flex items-center justify-center p-4">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import pickle
+import numpy as np
 
-    <div id="app" class="w-full max-w-2xl bg-white shadow-2xl rounded-xl p-8 space-y-8">
-        <header class="text-center space-y-2">
-            <h1 class="text-3xl font-extrabold text-blue-800">Diabetes Risk Predictor (kNN Model)</h1>
-            <p class="text-gray-600">Enter the patient's diagnostic measurements to assess diabetes risk. (Simulation)</p>
-            <div id="auth-info" class="text-xs text-gray-500 mt-2 p-1 bg-gray-100 rounded">
-                User ID: <span id="user-id-display" class="font-mono">Loading...</span>
-            </div>
-        </header>
+# --- 1. Load the Model ---
+# This path must match the filename created in training_and_evaluation.py
+MODEL_PATH = 'best_diabetes_model.pkl'
+model_pipeline = None
 
-        <!-- Input Form -->
-        <div id="input-form" class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            
-            <!-- Input Field Component -->
-            <div class="space-y-1">
-                <label for="pregnancies" class="block text-sm font-medium text-gray-700">1. Pregnancies (Number)</label>
-                <input type="number" id="pregnancies" value="6" min="0" step="1" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 6">
-            </div>
-            
-            <div class="space-y-1">
-                <label for="glucose" class="block text-sm font-medium text-gray-700">2. Glucose (Plasma glucose concentration a 2 hours)</label>
-                <input type="number" id="glucose" value="148" min="0" step="any" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 148">
-            </div>
+try:
+    with open(MODEL_PATH, 'rb') as file:
+        model_pipeline = pickle.load(file)
+    print("Best Model loaded successfully.")
+    
+    # Optional check: Determine which model was saved inside the pipeline
+    model_name = model_pipeline.steps[-1][0].upper().replace('_', ' ')
+    print(f"Loaded Model Type: {model_name}")
 
-            <div class="space-y-1">
-                <label for="blood_pressure" class="block text-sm font-medium text-gray-700">3. Blood Pressure (Diastolic BP in mm Hg)</label>
-                <input type="number" id="blood_pressure" value="72" min="0" step="any" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 72">
-            </div>
+except FileNotFoundError:
+    print(f"Error: Model file not found at {MODEL_PATH}.")
+    print("Please ensure you have run 'training_and_evaluation.py' successfully.")
+except Exception as e:
+    print(f"Error loading the model file: {e}")
+    model_pipeline = None
 
-            <div class="space-y-1">
-                <label for="skin_thickness" class="block text-sm font-medium text-gray-700">4. Skin Thickness (Triceps skin fold thickness in mm)</label>
-                <input type="number" id="skin_thickness" value="35" min="0" step="any" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 35">
-            </div>
 
-            <div class="space-y-1">
-                <label for="insulin" class="block text-sm font-medium text-gray-700">5. Insulin (2-Hour serum insulin in mu U/ml)</label>
-                <input type="number" id="insulin" value="0" min="0" step="any" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 0">
-                <p class="text-xs text-gray-500 italic">Note: 0 indicates missing/imputed data in the original set.</p>
-            </div>
+# --- 2. Setup FastAPI App ---
+app = FastAPI(title="Diabetes Risk Predictor API")
 
-            <div class="space-y-1">
-                <label for="bmi" class="block text-sm font-medium text-gray-700">6. BMI (Body mass index)</label>
-                <input type="number" id="bmi" value="33.6" min="0" step="0.1" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 33.6">
-            </div>
+# Add CORS middleware to allow the front-end application to send requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins for development/local testing
+    allow_methods=["POST", "GET"],
+    allow_headers=["*"],
+)
 
-            <div class="space-y-1">
-                <label for="dpf" class="block text-sm font-medium text-gray-700">7. Diabetes Pedigree Function</label>
-                <input type="number" id="dpf" value="0.627" min="0" step="0.001" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 0.627">
-            </div>
+# --- 3. Define the Input Data Structure ---
+# This structure must match the data sent from your front-end application.
+class PredictionFeatures(BaseModel):
+    pregnancies: float
+    glucose: float
+    blood_pressure: float
+    skin_thickness: float
+    insulin: float
+    bmi: float
+    diabetes_pedigree_function: float
+    age: float
 
-            <div class="space-y-1">
-                <label for="age" class="block text-sm font-medium text-gray-700">8. Age (Years)</label>
-                <input type="number" id="age" value="50" min="1" step="1" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 shadow-sm" placeholder="e.g., 50">
-            </div>
-            
-        </div>
+# --- 4. Define the API Endpoints ---
 
-        <button onclick="predictDiabetes()" id="predict-button" class="w-full py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 transition duration-150 shadow-md">
-            Check Diabetes Risk
-        </button>
+@app.get("/")
+def home():
+    """Simple health check endpoint."""
+    return {"status": "ok", "message": "Diabetes Prediction API is running."}
 
-        <!-- Prediction Result Display -->
-        <div id="result-card" class="hidden border-t-2 border-dashed pt-6 mt-6">
-            <h2 class="text-xl font-semibold mb-4 text-center text-blue-700">Model Prediction (kNN)</h2>
-            <div class="space-y-4">
-                <div id="prediction-text" class="text-center p-4 rounded-xl font-extrabold text-2xl transition duration-300"></div>
-                <div class="flex justify-center space-x-4 text-gray-700">
-                    <p>Confidence: <span id="confidence" class="font-bold text-lg text-indigo-600"></span></p>
-                    <p>Model Accuracy (CA): <span class="font-bold text-lg text-indigo-600">88.7%</span></p>
-                </div>
-            </div>
-        </div>
+@app.post("/predict")
+def predict_diabetes(data: PredictionFeatures):
+    """
+    Endpoint to receive patient features and return a diabetes risk prediction.
+    """
+    if model_pipeline is None:
+        return {"error": "Model not loaded. Cannot predict."}, 500
+
+    try:
+        # Convert incoming data (Pydantic model) into a list for NumPy
+        input_data = [
+            data.pregnancies, data.glucose, data.blood_pressure, 
+            data.skin_thickness, data.insulin, data.bmi, 
+            data.diabetes_pedigree_function, data.age
+        ]
         
-        <!-- Error/Loading Message -->
-        <div id="message-box" class="hidden text-center p-4 rounded-lg text-sm bg-yellow-100 text-yellow-800 transition duration-300"></div>
-
-    </div>
-
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Global variables provided by the environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let db;
-        let auth;
-        let userId = 'anonymous';
-
-        // Function to set up Firebase and authentication
-        async function setupFirebase() {
-            try {
-                if (Object.keys(firebaseConfig).length === 0) {
-                    console.error("Firebase configuration is missing. Cannot initialize Firestore.");
-                    document.getElementById('auth-info').textContent = 'Error: Firebase Config Missing';
-                    return;
-                }
-                
-                // 1. Initialize Firebase App
-                const app = initializeApp(firebaseConfig);
-                
-                // 2. Get services
-                auth = getAuth(app);
-                db = getFirestore(app);
-                setLogLevel('Debug'); // Enable debug logs for Firestore
-
-                // 3. Handle Authentication
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                    } else {
-                        // Sign in using the provided custom token or anonymously
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    }
-                    document.getElementById('user-id-display').textContent = userId;
-                    console.log("Firebase Auth Ready. User ID:", userId);
-
-                    // You would typically start Firestore listeners here if you needed to save prediction history.
-                });
-
-            } catch (error) {
-                console.error("Firebase initialization failed:", error);
-                document.getElementById('auth-info').textContent = `Auth Error: ${error.code}`;
-            }
-        }
-
-        setupFirebase();
-
-        // Expose the main function globally for the HTML button to call
-        window.predictDiabetes = predictDiabetes;
+        # Reshape data for the pipeline: [1, 8]
+        features = np.array([input_data])
         
-        // --- START SIMULATION LOGIC ---
-
-        /**
-         * Simulates the prediction call to the external API.
-         * In a real app, this function would use `fetch` to POST data to the FastAPI endpoint.
-         */
-        async function predictDiabetes() {
-            const button = document.getElementById('predict-button');
-            const resultCard = document.getElementById('result-card');
-            const messageBox = document.getElementById('message-box');
-            const predictionText = document.getElementById('prediction-text');
-            const confidenceSpan = document.getElementById('confidence');
-
-            // Reset UI
-            resultCard.classList.add('hidden');
-            messageBox.classList.add('hidden');
-            predictionText.className = 'text-center p-4 rounded-xl font-extrabold text-2xl transition duration-300';
-            button.disabled = true;
-            button.textContent = 'Processing...';
-
-            try {
-                // 1. Gather Input Data (and handle missing/invalid data like 0s)
-                const features = {
-                    Pregnancies: parseFloat(document.getElementById('pregnancies').value) || 0,
-                    Glucose: parseFloat(document.getElementById('glucose').value) || 0,
-                    Blood_Pressure: parseFloat(document.getElementById('blood_pressure').value) || 0,
-                    Skin_Thickness: parseFloat(document.getElementById('skin_thickness').value) || 0,
-                    Insulin: parseFloat(document.getElementById('insulin').value) || 0,
-                    BMI: parseFloat(document.getElementById('bmi').value) || 0,
-                    Diabetes_Pedigree_Function: parseFloat(document.getElementById('dpf').value) || 0,
-                    Age: parseInt(document.getElementById('age').value) || 0,
-                };
-                
-                // Basic validation (e.g., Glucose, BP, BMI shouldn't be 0 for a living adult)
-                if (features.Glucose === 0 || features.Blood_Pressure === 0 || features.BMI === 0) {
-                    messageBox.textContent = 'Warning: Glucose, Blood Pressure, and BMI values are typically non-zero. The model will use the imputed mean values (simulation).';
-                    messageBox.classList.remove('hidden');
-                    // In a real scenario, the Impute step happens before the model is called.
-                }
-
-                console.log("Input features collected:", features);
-
-                // 2. SIMULATION: API Call Delay
-                // This simulates the network latency and processing time of the external FastAPI server.
-                await new Promise(resolve => setTimeout(resolve, 1500)); 
-
-                // 3. SIMULATION: Prediction Logic (kNN-based)
-                // We'll simulate a prediction based on key features, aiming for the kNN's ~88.7% accuracy.
-                
-                let riskScore = 0;
-                // Glucose > 140 is a major indicator
-                if (features.Glucose > 140) riskScore += 0.40;
-                // BMI > 30 is a major indicator
-                if (features.BMI > 30) riskScore += 0.30;
-                // Age > 40 is a factor
-                if (features.Age > 40) riskScore += 0.15;
-                // High DPF or high Pregnancies are factors
-                if (features.Diabetes_Pedigree_Function > 0.5 || features.Pregnancies > 4) riskScore += 0.15;
-                
-                // Add a small random noise to simulate model variability
-                riskScore = Math.min(1.0, riskScore + (Math.random() * 0.1 - 0.05)); // keeps score between 0 and 1
-
-                let prediction = 0; // Non-Diabetic
-                let predictionMessage = "Non-Diabetic";
-                let confidence = (1 - riskScore);
-                let bgColor = "bg-green-100 text-green-700";
-                
-                if (riskScore >= 0.5) {
-                    prediction = 1; // Diabetic
-                    predictionMessage = "Diabetic (High Risk)";
-                    confidence = riskScore;
-                    bgColor = "bg-red-100 text-red-700";
-                }
-
-                confidenceSpan.textContent = `${(confidence * 100).toFixed(1)}%`;
-                predictionText.textContent = predictionMessage;
-                predictionText.classList.add(bgColor);
-                resultCard.classList.remove('hidden');
-
-                // 4. (Optional) In a real app, you would save this prediction to Firestore here:
-                /*
-                if (db) {
-                    const predictionRef = collection(db, `artifacts/${appId}/users/${userId}/predictions`);
-                    await addDoc(predictionRef, { 
-                        features: features, 
-                        result: prediction, 
-                        timestamp: new Date() 
-                    });
-                }
-                */
-
-            } catch (error) {
-                console.error("Prediction failed:", error);
-                messageBox.textContent = `Error: Could not process prediction. ${error.message}.`;
-                messageBox.classList.remove('hidden');
-            } finally {
-                button.disabled = false;
-                button.textContent = 'Check Diabetes Risk';
-            }
+        # Predict the outcome (0 or 1) using the loaded pipeline
+        prediction = model_pipeline.predict(features)[0].item()
+        
+        # Predict the probability for confidence score
+        probabilities = model_pipeline.predict_proba(features)[0]
+        # Get the probability for the predicted class
+        confidence = probabilities[prediction].item() 
+        
+        # Format the result
+        result = {
+            "prediction_code": prediction,
+            "result_message": "Diabetic (High Risk)" if prediction == 1 else "Non-Diabetic",
+            "confidence_score": round(confidence, 4)
         }
-    </script>
-</body>
-</html>
+        
+        return result
+        
+    except Exception as e:
+        print(f"Prediction error: {e}")
+        return {"error": f"Prediction failed due to internal server error."}, 500
